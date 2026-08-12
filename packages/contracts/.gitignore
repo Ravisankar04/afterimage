@@ -1,0 +1,9 @@
+# forge-std and OpenZeppelin are installed via:
+#   make install
+# or:
+#   forge install OpenZeppelin/openzeppelin-contracts@v5.0.2 --no-commit
+#   forge install foundry-rs/forge-std --no-commit
+lib/
+out/
+cache/
+broadcast/

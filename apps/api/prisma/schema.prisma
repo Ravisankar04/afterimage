@@ -1,0 +1,618 @@
+// AFTERIMAGE Prisma schema
+// PostgreSQL is the search/index/AI source of truth.
+// Blockchain remains authoritative for hashes, ownership, attestations.
+//
+// pgvector: enable with `CREATE EXTENSION IF NOT EXISTS vector;`
+// Embedding columns use Unsupported("vector(1536)") for RAG similarity search.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum AfterimageStatus {
+  ACTIVE
+  CHANGING
+  LAST_SEEN
+  GONE
+  ARCHIVED
+  CONTESTED
+}
+
+enum AfterimageType {
+  PLACE
+  OBJECT
+  ARTWORK
+  EVENT
+  PRODUCT
+  BUILDING
+  RESEARCH
+  OTHER
+}
+
+enum AfterimageCategory {
+  PLACES
+  OBJECTS
+  ART
+  EVENTS
+  PRODUCTS
+  SCIENCE
+  ARCHITECTURE
+  OTHER
+}
+
+enum EventType {
+  CREATED
+  DISCOVERED
+  OBSERVED
+  PHOTOGRAPHED
+  MODIFIED
+  MOVED
+  SOLD
+  RESTORED
+  RENOVATED
+  DAMAGED
+  OWNERSHIP_CHANGED
+  LAST_SEEN
+  DESTROYED
+  ARCHIVED
+  CUSTOM
+}
+
+enum EvidenceType {
+  PHOTO
+  VIDEO
+  AUDIO
+  DOCUMENT
+  SENSOR
+  WITNESS
+  SIGNATURE
+  OTHER
+}
+
+enum EvidenceVisibility {
+  PUBLIC
+  APPROXIMATE
+  PRIVATE
+}
+
+/// Location privacy: PUBLIC (exact), APPROXIMATE (coarse), PRIVATE (commitment only)
+enum LocationVisibility {
+  PUBLIC
+  APPROXIMATE
+  PRIVATE
+}
+
+enum DisputeStatus {
+  OPEN
+  CONTESTED
+  RESOLVED
+  WITHDRAWN
+}
+
+enum AccessRole {
+  OWNER
+  CREATOR
+  WITNESS
+  COLLABORATOR
+  VIEWER
+}
+
+enum ProcessingStatus {
+  UPLOADING
+  VALIDATING
+  HASHING
+  STORING
+  SIGNING
+  BROADCASTING
+  CONFIRMING
+  INDEXING
+  COMPLETE
+  FAILED
+}
+
+enum StorageProviderKind {
+  LOCAL
+  S3
+  IPFS
+}
+
+enum BlockchainEventName {
+  AfterimageCreated
+  EventCreated
+  EvidenceRegistered
+  WitnessAdded
+  DisputeCreated
+  DisputeResolved
+  OwnershipTransferred
+  AfterimageMarkedGone
+  AfterimageMarkedLastSeen
+  AfterimageArchived
+  Unknown
+}
+
+enum OwnershipEventKind {
+  CREATED
+  TRANSFERRED
+  COLLABORATOR_ADDED
+  COLLABORATOR_REMOVED
+  ARCHIVED
+  VISIBILITY_CHANGED
+}
+
+enum AIMessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  UPLOAD
+  VERIFY
+  SIGN
+  DISPUTE
+  WITNESS
+  TRANSFER
+  AI_QUERY
+  INDEX
+  ADMIN
+}
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String   @id @default(cuid())
+  address       String   @unique
+  displayName   String?
+  avatarUrl     String?
+  nonce         String   @default(cuid())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  afterimages       Afterimage[]       @relation("AfterimageCreator")
+  ownedAfterimages  Afterimage[]       @relation("AfterimageOwner")
+  events            AfterimageEvent[]
+  evidence          Evidence[]
+  witnesses         Witness[]
+  confirmations     WitnessConfirmation[]
+  disputes          Dispute[]          @relation("DisputeClaimant")
+  resolvedDisputes  Dispute[]          @relation("DisputeResolver")
+  ownershipFrom     OwnershipEvent[]   @relation("OwnershipFrom")
+  ownershipTo       OwnershipEvent[]   @relation("OwnershipTo")
+  conversations     AIConversation[]
+  auditLogs         AuditLog[]
+  storageObjects    StorageObject[]
+
+  @@index([address])
+  @@map("users")
+}
+
+model Afterimage {
+  id              String            @id @default(cuid())
+  /// Off-chain stable id; may mirror on-chain bytes32 as 0x-prefixed hex
+  onChainId       String?           @unique
+  title           String
+  slug            String            @unique
+  type            AfterimageType
+  category        AfterimageCategory @default(OTHER)
+  description     String            @default("")
+  status          AfterimageStatus  @default(ACTIVE)
+  visibility      LocationVisibility @default(APPROXIMATE)
+
+  // Location privacy
+  /// Exact coords — only returned when visibility = PUBLIC and requester authorized
+  latitude        Float?
+  longitude       Float?
+  /// Coarse location for APPROXIMATE (city / grid cell label)
+  approximateLabel String?
+  approximateLat  Float?
+  approximateLng  Float?
+  /// keccak256 commitment for PRIVATE locations (never reveal preimage publicly)
+  locationCommitment String?
+  locationSaltHash   String?
+
+  firstObserved   DateTime
+  lastObserved    DateTime?
+  yearFirst       Int
+  yearLast        Int?
+
+  metadataHash    String?
+  currentEventId  String?
+
+  creatorId       String
+  creator         User              @relation("AfterimageCreator", fields: [creatorId], references: [id])
+  ownerId         String
+  owner           User              @relation("AfterimageOwner", fields: [ownerId], references: [id])
+
+  eventCount      Int               @default(0)
+  evidenceCount   Int               @default(0)
+  witnessCount    Int               @default(0)
+
+  processingStatus ProcessingStatus @default(COMPLETE)
+  processingJobId  String?
+
+  /// RAG embedding — requires pgvector extension (vector(1536))
+  /// Run: CREATE EXTENSION IF NOT EXISTS vector;
+  embedding       Unsupported("vector(1536)")?
+  embeddingText   String?           @db.Text
+
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  events            AfterimageEvent[]
+  evidence          Evidence[]
+  witnesses         Witness[]
+  disputes          Dispute[]
+  ownershipEvents   OwnershipEvent[]
+  blockchainEvents  BlockchainEvent[]
+  storageObjects    StorageObject[]
+  conversations     AIConversation[]
+
+  @@index([status])
+  @@index([type])
+  @@index([category])
+  @@index([yearFirst])
+  @@index([yearLast])
+  @@index([creatorId])
+  @@index([ownerId])
+  @@index([title])
+  @@map("afterimages")
+}
+
+model AfterimageEvent {
+  id                 String            @id @default(cuid())
+  onChainId          String?           @unique
+  afterimageId       String
+  afterimage         Afterimage        @relation(fields: [afterimageId], references: [id], onDelete: Cascade)
+
+  parentEventId      String?
+  parentEvent        AfterimageEvent?  @relation("EventHierarchy", fields: [parentEventId], references: [id])
+  children           AfterimageEvent[] @relation("EventHierarchy")
+
+  creatorId          String
+  creator            User              @relation(fields: [creatorId], references: [id])
+
+  eventType          EventType
+  title              String?
+  description        String            @default("")
+  occurredAt         DateTime
+  contentHash        String?
+  metadataHash       String?
+  locationCommitment String?
+
+  processingStatus   ProcessingStatus  @default(COMPLETE)
+
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  evidence           Evidence[]
+  witnesses          Witness[]
+  disputes           Dispute[]
+  confirmations      WitnessConfirmation[]
+
+  @@index([afterimageId])
+  @@index([parentEventId])
+  @@index([eventType])
+  @@index([occurredAt])
+  @@map("afterimage_events")
+}
+
+model Evidence {
+  id                String             @id @default(cuid())
+  onChainId         String?            @unique
+  afterimageId      String
+  afterimage        Afterimage         @relation(fields: [afterimageId], references: [id], onDelete: Cascade)
+  eventId           String?
+  event             AfterimageEvent?   @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  creatorId         String
+  creator           User               @relation(fields: [creatorId], references: [id])
+
+  type              EvidenceType
+  visibility        EvidenceVisibility @default(PUBLIC)
+  title             String?
+  description       String             @default("")
+
+  contentHash       String?
+  metadataHash      String?
+  storageObjectId   String?
+  storageObject     StorageObject?     @relation(fields: [storageObjectId], references: [id])
+  storageReference  String?
+
+  mimeType          String?
+  byteSize          Int?
+  originalFilename  String?
+
+  /// RAG embedding for evidence-backed retrieval
+  embedding         Unsupported("vector(1536)")?
+  embeddingText     String?            @db.Text
+
+  processingStatus  ProcessingStatus   @default(UPLOADING)
+
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  disputeEvidence   DisputeEvidence[]
+
+  @@index([afterimageId])
+  @@index([eventId])
+  @@index([contentHash])
+  @@index([type])
+  @@map("evidence")
+}
+
+model Witness {
+  id            String           @id @default(cuid())
+  afterimageId  String
+  afterimage    Afterimage       @relation(fields: [afterimageId], references: [id], onDelete: Cascade)
+  eventId       String?
+  event         AfterimageEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  userId        String
+  user          User             @relation(fields: [userId], references: [id])
+
+  statement     String           @default("")
+  statementHash String?
+  signature     String?
+  nonce         String?
+  deadline      DateTime?
+
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  confirmations WitnessConfirmation[]
+
+  @@unique([afterimageId, userId, eventId])
+  @@index([eventId])
+  @@index([userId])
+  @@map("witnesses")
+}
+
+model WitnessConfirmation {
+  id            String           @id @default(cuid())
+  onChainId     String?          @unique
+  witnessId     String
+  witness       Witness          @relation(fields: [witnessId], references: [id], onDelete: Cascade)
+  eventId       String
+  event         AfterimageEvent  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User             @relation(fields: [userId], references: [id])
+
+  contentHash   String?
+  signature     String?
+  confirmedAt   DateTime         @default(now())
+  withdrawn     Boolean          @default(false)
+  withdrawnAt   DateTime?
+
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@unique([witnessId, eventId])
+  @@index([eventId])
+  @@index([userId])
+  @@map("witness_confirmations")
+}
+
+model Dispute {
+  id              String         @id @default(cuid())
+  onChainId       String?        @unique
+  afterimageId    String
+  afterimage      Afterimage     @relation(fields: [afterimageId], references: [id], onDelete: Cascade)
+  eventId         String?
+  event           AfterimageEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  claimantId      String
+  claimant        User           @relation("DisputeClaimant", fields: [claimantId], references: [id])
+  resolverId      String?
+  resolver        User?          @relation("DisputeResolver", fields: [resolverId], references: [id])
+
+  status          DisputeStatus  @default(OPEN)
+  reason          String
+  reasonHash      String?
+  resolution      String?
+  resolutionHash  String?
+  favorClaimant   Boolean?
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  resolvedAt      DateTime?
+
+  evidenceLinks   DisputeEvidence[]
+
+  @@index([afterimageId])
+  @@index([eventId])
+  @@index([status])
+  @@index([claimantId])
+  @@map("disputes")
+}
+
+model DisputeEvidence {
+  id          String   @id @default(cuid())
+  disputeId   String
+  dispute     Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  evidenceId  String
+  evidence    Evidence @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  note        String   @default("")
+  createdAt   DateTime @default(now())
+
+  @@unique([disputeId, evidenceId])
+  @@map("dispute_evidence")
+}
+
+model OwnershipEvent {
+  id            String             @id @default(cuid())
+  onChainId     String?            @unique
+  afterimageId  String
+  afterimage    Afterimage         @relation(fields: [afterimageId], references: [id], onDelete: Cascade)
+
+  kind          OwnershipEventKind
+  fromUserId    String?
+  fromUser      User?              @relation("OwnershipFrom", fields: [fromUserId], references: [id])
+  toUserId      String?
+  toUser        User?              @relation("OwnershipTo", fields: [toUserId], references: [id])
+
+  metadataHash  String?
+  /// Filled by indexer when on-chain transfer is confirmed — null until indexed
+  txHash        String?
+  blockNumber   BigInt?
+
+  createdAt     DateTime           @default(now())
+
+  @@index([afterimageId])
+  @@index([kind])
+  @@map("ownership_events")
+}
+
+model BlockchainEvent {
+  id              String              @id @default(cuid())
+  afterimageId    String?
+  afterimage      Afterimage?         @relation(fields: [afterimageId], references: [id], onDelete: SetNull)
+
+  eventName       BlockchainEventName
+  contractAddress String
+  blockNumber     BigInt
+  blockHash       String
+  transactionHash String
+  logIndex        Int
+  /// Unix seconds from block timestamp when available
+  timestamp       DateTime?
+  args            Json                @default("{}")
+
+  /// Confirmation depth tracking / reorg awareness
+  confirmations   Int                 @default(0)
+  finalized       Boolean             @default(false)
+  removed         Boolean             @default(false)
+
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@unique([transactionHash, logIndex, blockHash])
+  @@index([afterimageId])
+  @@index([eventName])
+  @@index([blockNumber])
+  @@index([transactionHash])
+  @@map("blockchain_events")
+}
+
+model StorageObject {
+  id              String              @id @default(cuid())
+  /// Random opaque key — never derived from user filename
+  storageKey      String              @unique
+  provider        StorageProviderKind
+  bucket          String?
+  /// Provider-specific URI (s3://, ipfs://, file://) — never includes credentials
+  uri             String
+  contentHash     String?
+  mimeType        String?
+  byteSize        Int?
+  originalFilename String?
+  /// Soft-delete / quarantine
+  quarantined     Boolean             @default(false)
+
+  uploaderId      String?
+  uploader        User?               @relation(fields: [uploaderId], references: [id])
+  afterimageId    String?
+  afterimage      Afterimage?         @relation(fields: [afterimageId], references: [id], onDelete: SetNull)
+
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  evidence        Evidence[]
+
+  @@index([contentHash])
+  @@index([provider])
+  @@map("storage_objects")
+}
+
+model AIConversation {
+  id            String      @id @default(cuid())
+  afterimageId  String?
+  afterimage    Afterimage? @relation(fields: [afterimageId], references: [id], onDelete: SetNull)
+  userId        String?
+  user          User?       @relation(fields: [userId], references: [id])
+  title         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  messages      AIMessage[]
+
+  @@index([afterimageId])
+  @@index([userId])
+  @@map("ai_conversations")
+}
+
+model AIMessage {
+  id              String        @id @default(cuid())
+  conversationId  String
+  conversation    AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role            AIMessageRole
+  content         String        @db.Text
+  /// Evidence IDs cited in this response (assistant only)
+  citedEvidenceIds String[]     @default([])
+  insufficientEvidence Boolean  @default(false)
+  createdAt       DateTime      @default(now())
+
+  @@index([conversationId])
+  @@map("ai_messages")
+}
+
+model AuditLog {
+  id          String      @id @default(cuid())
+  userId      String?
+  user        User?       @relation(fields: [userId], references: [id])
+  action      AuditAction
+  entityType  String
+  entityId    String?
+  metadata    Json        @default("{}")
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime    @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+/// Idempotency / job tracking for BullMQ workers
+model JobReceipt {
+  id          String   @id @default(cuid())
+  queue       String
+  jobId       String
+  idempotencyKey String
+  status      String
+  result      Json?
+  error       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([queue, idempotencyKey])
+  @@index([jobId])
+  @@map("job_receipts")
+}
+
+/// Indexer cursor for reorg-aware scanning
+model IndexerState {
+  id              String   @id @default("default")
+  lastBlockNumber BigInt   @default(0)
+  lastBlockHash   String?
+  updatedAt       DateTime @updatedAt
+
+  @@map("indexer_state")
+}

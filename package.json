@@ -1,0 +1,29 @@
+{
+  "name": "afterimage",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AFTERIMAGE — Preserve What Time Removes. Blockchain temporal provenance protocol.",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "infra": "docker compose up -d postgres redis",
+    "db:generate": "pnpm --filter @afterimage/api exec prisma generate",
+    "db:migrate": "pnpm --filter @afterimage/api exec prisma migrate deploy",
+    "db:seed": "pnpm --filter @afterimage/api exec prisma db seed",
+    "db:push": "pnpm --filter @afterimage/api exec prisma db push",
+    "clean": "turbo run clean && rimraf node_modules"
+  },
+  "devDependencies": {
+    "rimraf": "^5.0.5",
+    "turbo": "^2.3.0",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

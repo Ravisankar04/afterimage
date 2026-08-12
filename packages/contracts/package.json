@@ -1,0 +1,23 @@
+{
+  "name": "@afterimage/contracts",
+  "version": "0.1.0",
+  "description": "AFTERIMAGE Foundry smart contracts — temporal provenance registries",
+  "private": true,
+  "scripts": {
+    "build": "forge build",
+    "lint": "forge fmt --check",
+    "typecheck": "forge build",
+    "test": "forge test -vvv",
+    "test:gas": "forge test --gas-report",
+    "test:fuzz": "forge test --fuzz-runs 1000",
+    "test:invariant": "forge test --match-path test/*Invariant*.t.sol -vvv",
+    "clean": "forge clean",
+    "fmt": "forge fmt",
+    "fmt:check": "forge fmt --check",
+    "snapshot": "forge snapshot",
+    "coverage": "forge coverage",
+    "deploy:local": "forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast",
+    "install": "forge install OpenZeppelin/openzeppelin-contracts@v5.0.2 --no-commit && forge install foundry-rs/forge-std --no-commit"
+  },
+  "license": "MIT"
+}

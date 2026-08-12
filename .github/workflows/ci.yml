@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Lint · Typecheck · Test · Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Install Solidity dependencies
+        working-directory: packages/contracts
+        run: |
+          forge install OpenZeppelin/openzeppelin-contracts@v5.0.2 --no-commit
+          forge install foundry-rs/forge-std --no-commit
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Frontend tests
+        run: pnpm --filter @afterimage/web test
+
+      - name: Backend tests
+        run: pnpm --filter @afterimage/api test
+
+      - name: Foundry tests
+        working-directory: packages/contracts
+        run: forge test -vvv
+
+      - name: Build
+        run: pnpm build
+
+      # Explicit fail-fast guarantee: any prior step failure already fails the job.
+      # This step documents the product rule that deployment must not proceed on red tests.
+      - name: Assert tests passed
+        if: failure()
+        run: |
+          echo "CI failed: lint, typecheck, tests, or build did not succeed."
+          echo "AFTERIMAGE does not ship with failing tests or fabricated green status."
+          exit 1
