@@ -51,5 +51,3 @@ packages/contracts/lib/
 # Test / misc
 *.pem
 .nyc_output/
-
-apps/web/package-lock.json
