@@ -1,5 +1,5 @@
 {
-  "name": "@afterimage/web",
+  "name": "afterimage",
   "version": "0.1.0",
   "private": true,
   "scripts": {
